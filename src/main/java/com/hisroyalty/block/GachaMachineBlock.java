@@ -4,16 +4,15 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import com.hisroyalty.GachaMachine;
 import com.hisroyalty.ModTags;
-import com.hisroyalty.item.GachaItemRegistry;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.DataResult;
 import com.mojang.serialization.JsonOps;
 import net.fabricmc.loader.api.FabricLoader;
+import net.impactdev.impactor.api.economy.EconomyService;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.HorizontalFacingBlock;
-import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.enums.DoubleBlockHalf;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.LivingEntity;
@@ -21,20 +20,14 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemPlacementContext;
 import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
 import net.minecraft.loot.LootTable;
-import net.minecraft.loot.LootTables;
 import net.minecraft.loot.context.LootContextParameterSet;
 import net.minecraft.loot.context.LootContextParameters;
-import net.minecraft.loot.context.LootContextType;
-import net.minecraft.loot.context.LootContextTypes;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.registry.tag.TagKey;
-import net.minecraft.resource.ResourcePackManager;
-import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvents;
@@ -56,9 +49,10 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
+import java.util.concurrent.ExecutionException;
 
 import static com.hisroyalty.GachaMachine.GACHA_MACHINE_LOOT_CONTEXT;
 import static com.hisroyalty.GachaMachine.MOD_ID;
@@ -154,14 +148,83 @@ public class GachaMachineBlock extends Block {
         }
         return super.getStateForNeighborUpdate(state, direction, neighborState, world, pos, neighborPos);
     }
+
     private boolean isValidItem(ItemStack stack) {
         return stack.isIn(ModTags.Items.CURRENCY_ITEMS);
     }
 
     @Override
+    protected ActionResult onUse(BlockState state, World world, BlockPos pos, PlayerEntity player, BlockHitResult hit) {
+        if(world.isClient) {
+            return ActionResult.SUCCESS;
+        }
+        return super.onUse(state, world, pos, player, hit);
+    }
+
+    @Override
     protected ItemActionResult onUseWithItem(ItemStack stack, BlockState state, World world, BlockPos pos, PlayerEntity player, Hand hand, BlockHitResult hit) {
 
+        if (world.isClient) {
+            return ItemActionResult.SUCCESS;
+        }
+
+        if (GachaMachine.useImpactorEconomy()) {
+            // Check Impactor Economy balance
+            int requiredAmount = GachaMachine.getImpactorAmount();
+
+            try {
+                if (EconomyService.instance().account(player.getUuid()).get().balance().intValue() >= requiredAmount) {
+                    // Deduct the required amount
+                    EconomyService.instance().account(player.getUuid()).get().withdraw(BigDecimal.valueOf(requiredAmount));
+
+                    // Handle successful Impactor economy transaction
+                    ItemStack capsule = getOutput(player);
+                    Direction direction = state.get(FACING);
+
+                    BlockPos spawnPos = pos;
+                    if (state.get(HALF) == DoubleBlockHalf.UPPER) {
+                        spawnPos = pos.down();
+                    }
+
+                    double offsetX = direction.getOffsetX() * 0.5;
+                    double offsetZ = direction.getOffsetZ() * 0.5;
+
+                    ItemEntity capsuleEntity = new ItemEntity(
+                            world,
+                            spawnPos.getX() + 0.5 + offsetX,
+                            spawnPos.getY() + 0.5,
+                            spawnPos.getZ() + 0.5 + offsetZ,
+                            capsule
+                    );
+
+                    capsuleEntity.setVelocity(
+                            direction.getOffsetX() * 0.2,
+                            0.0,
+                            direction.getOffsetZ() * 0.2
+                    );
+
+                    world.spawnEntity(capsuleEntity);
+                    updateLevel(world, pos, state, 0);
+
+                    world.playSound(null, pos, SoundEvents.ENTITY_EXPERIENCE_ORB_PICKUP, SoundCategory.BLOCKS, 1.0F, 1.0F);
+                    return ItemActionResult.SUCCESS;
+                } else {
+                    // Insufficient funds
+                    player.sendMessage(Text.translatable("message.gacha_machine.insufficient_funds"), true);
+                    return ItemActionResult.FAIL;
+                }
+            } catch (InterruptedException | ExecutionException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        // Fallback to original item-based economy
+        return handleItemBasedEconomy(stack, state, world, pos, player, hand, hit);
+    }
+
+    private ItemActionResult handleItemBasedEconomy(ItemStack stack, BlockState state, World world, BlockPos pos, PlayerEntity player, Hand hand, BlockHitResult hit) {
         if (!isValidItem(stack)) {
+            // Handle invalid item logic
             TagKey<Item> currencyTag = ModTags.Items.CURRENCY_ITEMS;
             StringBuilder itemNames = new StringBuilder();
 
@@ -193,23 +256,21 @@ public class GachaMachineBlock extends Block {
             if (currentLevel < (deserializeLevel() - 1)) {
                 updateLevel(world, pos, state, currentLevel + 1);
 
-
-                Text text = Text.literal("[").append(Text.of(String.valueOf(currentLevel+1))).append(Text.of("/")).append(Text.of(String.valueOf(deserializeLevel()))).append(Text.of("]"));
+                Text text = Text.literal("[").append(Text.of(String.valueOf(currentLevel + 1)))
+                        .append(Text.of("/"))
+                        .append(Text.of(String.valueOf(deserializeLevel()))).append(Text.of("]"));
                 player.sendMessage(text, true);
-
-
-
 
                 if (!player.isCreative()) {
                     stack.decrement(1);
                 }
-
 
                 world.playSound(null, pos, SoundEvents.BLOCK_AMETHYST_BLOCK_CHIME, SoundCategory.BLOCKS, 1.0F, 1.0F);
 
                 return ItemActionResult.SUCCESS;
             } else {
                 if (!world.isClient) {
+                    // Generate and spawn capsule
                     ItemStack capsule = getOutput(player);
                     Direction direction = state.get(FACING);
 
@@ -245,7 +306,6 @@ public class GachaMachineBlock extends Block {
         }
 
         return ItemActionResult.FAIL;
-
     }
 
     @Override

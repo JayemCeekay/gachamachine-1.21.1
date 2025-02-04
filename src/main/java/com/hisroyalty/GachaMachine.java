@@ -2,48 +2,34 @@ package com.hisroyalty;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.hisroyalty.block.DummyGachaMachineBlock;
 import com.hisroyalty.block.GachaMachineBlock;
 import com.hisroyalty.item.GachaItemRegistry;
 import com.hisroyalty.mixin.LootContextTypesAccessor;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.itemgroup.v1.FabricItemGroup;
-import net.fabricmc.fabric.api.loot.v3.LootTableEvents;
-import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
-import net.fabricmc.fabric.api.resource.SimpleResourceReloadListener;
-import net.fabricmc.fabric.api.screenhandler.v1.ExtendedScreenHandlerType;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.block.AbstractBlock;
 import net.minecraft.block.Block;
-import net.minecraft.item.Item;
 import net.minecraft.item.ItemGroup;
 import net.minecraft.item.ItemStack;
-import net.minecraft.loot.LootTable;
 import net.minecraft.loot.context.LootContextParameters;
 import net.minecraft.loot.context.LootContextType;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKey;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.registry.tag.TagKey;
-import net.minecraft.resource.ResourceManager;
-import net.minecraft.resource.ResourceType;
 import net.minecraft.sound.BlockSoundGroup;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
-import net.minecraft.util.profiler.Profiler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.io.FileReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-
-
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
 public class GachaMachine implements ModInitializer {
@@ -98,14 +84,40 @@ public class GachaMachine implements ModInitializer {
 		File configFile = new File(configDir, "config.json");
 
 		if (!configFile.exists()) {
+			JsonObject defaultConfig = new JsonObject();
+			defaultConfig.addProperty("useImpactorEconomy", false); // New toggle for Impactor Economy
+			defaultConfig.addProperty("impactorAmount", 10);       // Default Impactor Currency amount
+
 			try {
-				if (configFile.createNewFile()) {
-					System.out.println("Config file created: " + configFile.getAbsolutePath());
-				}
+				Files.writeString(configFile.toPath(), new Gson().toJson(defaultConfig), StandardCharsets.UTF_8);
+				System.out.println("Default config file created: " + configFile.getAbsolutePath());
 			} catch (IOException e) {
 				throw new RuntimeException("Failed to create config file: " + configFile.getAbsolutePath(), e);
 			}
 		}
+	}
+
+	public static boolean useImpactorEconomy() {
+		return getConfigProperty("useImpactorEconomy", false);
+	}
+
+	public static int getImpactorAmount() {
+		return getConfigProperty("impactorAmount", 100);
+	}
+
+	private static <T> T getConfigProperty(String key, T defaultValue) {
+		File configFile = new File(FabricLoader.getInstance().getConfigDir().toFile(), "gachamachine/config.json");
+		if (configFile.exists()) {
+			try (FileReader reader = new FileReader(configFile)) {
+				JsonObject config = JsonParser.parseReader(reader).getAsJsonObject();
+				if (config.has(key)) {
+					return (T) new Gson().fromJson(config.get(key), defaultValue.getClass());
+				}
+			} catch (IOException e) {
+				System.err.println("Failed to read config: " + e.getMessage());
+			}
+		}
+		return defaultValue;
 	}
 
 

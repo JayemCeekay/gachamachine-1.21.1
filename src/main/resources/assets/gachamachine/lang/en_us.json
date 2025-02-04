@@ -18,5 +18,6 @@
     "item.gachamachine.emerald_capsule_alt": "Emerald Capsule Alt",
     "item.gachamachine.iron_capsule_alt": "Iron Capsule Alt",
 
-    "message.gacha_machine.invalid_currency": "Invalid currency inserted. Needs: %s"
+    "message.gacha_machine.invalid_currency": "Invalid currency inserted. Needs: %s",
+    "message.gacha_machine.insufficient_funds": "Insufficient funds."
 }
